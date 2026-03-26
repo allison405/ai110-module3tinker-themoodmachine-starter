@@ -11,7 +11,7 @@ This class starts with very simple logic:
 
 from typing import List, Dict, Tuple, Optional
 
-from dataset import POSITIVE_WORDS, NEGATIVE_WORDS
+from dataset import POSITIVE_WORDS, NEGATIVE_WORDS, NEUTRAL_WORDS, MIXED_WORDS
 
 
 class MoodAnalyzer:
@@ -23,14 +23,20 @@ class MoodAnalyzer:
         self,
         positive_words: Optional[List[str]] = None,
         negative_words: Optional[List[str]] = None,
+        neutral_words: Optional[List[str]] = None,
+        mixed_words: Optional[List[str]] = None,
     ) -> None:
         # Use the default lists from dataset.py if none are provided.
         positive_words = positive_words if positive_words is not None else POSITIVE_WORDS
         negative_words = negative_words if negative_words is not None else NEGATIVE_WORDS
+        neutral_words = neutral_words if neutral_words is not None else NEUTRAL_WORDS
+        mixed_words = mixed_words if mixed_words is not None else MIXED_WORDS
 
         # Store as sets for faster lookup.
         self.positive_words = set(w.lower() for w in positive_words)
         self.negative_words = set(w.lower() for w in negative_words)
+        self.neutral_words = set(w.lower() for w in neutral_words)
+        self.mixed_words = set(w.lower() for w in mixed_words)
 
     # ---------------------------------------------------------------------
     # Preprocessing
@@ -52,7 +58,9 @@ class MoodAnalyzer:
           - Handle simple emojis separately (":)", ":-(", "🥲", "😂")
           - Normalize repeated characters ("soooo" -> "soo")
         """
+        import re
         cleaned = text.strip().lower()
+        cleaned = re.sub(r"[^\w\s:)(💀😭😂🥹🥲]", " ", cleaned)
         tokens = cleaned.split()
 
         return tokens
@@ -75,15 +83,21 @@ class MoodAnalyzer:
           - Give some words higher weights than others (for example "hate" < "annoyed")
           - Treat emojis or slang (":)", "lol", "💀") as strong signals
         """
-        # TODO: Implement this method.
-        #   1. Call self.preprocess(text) to get tokens.
-        #   2. Loop over the tokens.
-        #   3. Increase the score for positive words, decrease for negative words.
-        #   4. Return the total score.
-        #
-        # Hint: if you implement negation, you may want to look at pairs of tokens,
-        # like ("not", "happy") or ("never", "fun").
-        pass
+        tokens = self.preprocess(text)
+        score = 0
+        negators = {"not", "never", "no", "cant", "can't", "don't", "dont", "isn't", "isnt"}
+        positive_terms = {":)", "😂", "🥹", "lol", "lowkey", "highkey", "no cap", "hyped", "blessed", "vibing"}
+
+        for i, token in enumerate(tokens):
+            is_negated = i > 0 and tokens[i - 1] in negators
+            if token in self.positive_words or token in positive_terms:
+                score += -1 if is_negated else 1
+            elif token in self.negative_words:
+                score += 1 if is_negated else -1
+            elif token in self.neutral_words or token in self.mixed_words:
+                score += 0
+
+        return score
 
     # ---------------------------------------------------------------------
     # Label prediction
@@ -105,12 +119,44 @@ class MoodAnalyzer:
         Just remember that whatever labels you return should match the labels
         you use in TRUE_LABELS in dataset.py if you care about accuracy.
         """
-        # TODO: Implement this method.
-        #   1. Call self.score_text(text) to get the numeric score.
-        #   2. Return "positive" if the score is above 0.
-        #   3. Return "negative" if the score is below 0.
-        #   4. Return "neutral" otherwise.
-        pass
+        tokens = self.preprocess(text)
+        positive_terms = {":)", "😂", "🥹", "lol", "lowkey", "highkey", "no cap", "hyped", "blessed", "vibing"}
+        negators = {"not", "never", "no", "cant", "can't", "don't", "dont", "isn't", "isnt"}
+
+        pos_count = 0
+        neg_count = 0
+        neutral_count = 0
+        has_mixed_word = False
+
+        for i, token in enumerate(tokens):
+            is_negated = i > 0 and tokens[i - 1] in negators
+            if token in self.positive_words or token in positive_terms:
+                if is_negated:
+                    neg_count += 1
+                else:
+                    pos_count += 1
+            elif token in self.negative_words:
+                if is_negated:
+                    pos_count += 1
+                else:
+                    neg_count += 1
+            elif token in self.neutral_words:
+                neutral_count += 1
+            elif token in self.mixed_words:
+                has_mixed_word = True
+
+        if has_mixed_word and pos_count > 0 and neg_count > 0:
+            return "mixed"
+        if pos_count > 0 and neg_count > 0 and abs(pos_count - neg_count) <= 1:
+            return "mixed"
+        if neutral_count > pos_count and neg_count == 0:
+            return "neutral"
+        elif pos_count > neg_count:
+            return "positive"
+        elif neg_count > pos_count:
+            return "negative"
+        else:
+            return "neutral"
 
     # ---------------------------------------------------------------------
     # Explanations (optional but recommended)
